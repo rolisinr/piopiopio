@@ -1,5 +1,5 @@
 // URL del backend en Render — se actualiza cuando tengas la URL real
-const BASE = import.meta.env.VITE_BACKEND_URL || 'https://anexo-backend.onrender.com'
+const BASE = 'https://anexo-backend.onrender.com'
 
 /**
  * Escucha sesiones activas con polling cada 5 segundos.
