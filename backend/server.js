@@ -124,12 +124,22 @@ app.post('/webhook', async (req, res) => {
       if (!info.ok) return
 
       const filePath = info.result.file_path
-      const buffer   = await TGdownload(filePath)
       const fileName = `${Date.now()}_foto${sessions[chatId].photoCount + 1}.jpg`
-      const url      = await storePhoto(buffer, fileName, filePath, chatId, userName)
 
+      // Guardar en sesión inmediatamente
       sessions[chatId].photoCount++
       sessions[chatId].lastActivity = Date.now()
+
+      // Drive con fallback a URL de Telegram
+      let url
+      try {
+        const buffer = await TGdownload(filePath)
+        url = await storePhoto(buffer, fileName, filePath, chatId, userName)
+      } catch (e) {
+        console.error('Drive error:', e.message)
+        url = `https://api.telegram.org/file/bot${BOT_TOKEN}/${filePath}`
+      }
+
       sessions[chatId].photos.push({ url, fileName, receivedAt: Date.now() })
 
       const count = sessions[chatId].photoCount
