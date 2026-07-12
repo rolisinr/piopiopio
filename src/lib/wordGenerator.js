@@ -84,7 +84,8 @@ export async function generateWord(photos) {
   // 1 DXA = 914.4 EMU → 5229 * 914.4 ≈ 4781566 EMU para la tabla completa
   // Cada foto: mitad → ~2390783 EMU de ancho → ~9.13 cm
   // Usamos 3250000 EMU ≈ 9.03 cm para dejar algo de espacio
-  const PHOTO_WIDTH_EMU = 3250000
+  const PHOTO_WIDTH_EMU  = 3320415
+  const PHOTO_HEIGHT_EMU_FIXED = 4474845
 
   // Reemplazar las celdas vacías de cada tabla con las fotos
   // Cada tabla tiene: fila 1 = fotos, fila 2 = descripción
@@ -170,9 +171,8 @@ function insertPhotosIntoXml(docXml, imageEntries, photoDimensions, photoWidthEm
     if (!pair.left && !pair.right) return tableXml
 
     // Construir XMLs de foto
-    const PHOTO_HEIGHT_EMU = pair.left
-      ? Math.round(photoWidthEmu * (photoDimensions[pair.left.slotIndex]?.height / photoDimensions[pair.left.slotIndex]?.width || 0.75))
-      : Math.round(photoWidthEmu * 0.75)
+    // Altura fija del slot
+    const PHOTO_HEIGHT_EMU = PHOTO_HEIGHT_EMU_FIXED // pair.left
 
     const leftXml = pair.left
       ? `<w:p><w:pPr><w:jc w:val="left"/></w:pPr><w:r>${makeDrawingXml(pair.left.rId, photoWidthEmu, PHOTO_HEIGHT_EMU, `foto_${pair.left.slotIndex + 1}`)}</w:r></w:p>`

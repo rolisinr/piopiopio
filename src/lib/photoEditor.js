@@ -1,99 +1,61 @@
 /**
- * Aplica recorte, escala y texto estampado a una foto usando Canvas.
- * Devuelve un Blob (JPEG) listo para insertar en el Word o mostrar en preview.
+ * Renderiza una foto en el tamaño fijo del slot, aplicando
+ * la posición/zoom elegidos por el usuario y el texto estampado.
  *
- * @param {HTMLImageElement} img     - Imagen fuente ya cargada
- * @param {Object} crop              - { x, y, width, height } en píxeles sobre la imagen original
- * @param {number} heightScale       - Factor de escala vertical (1.0 = proporcional, >1 = estirado)
- * @param {Object} overlay           - { datetime, name, extra } textos a estampar
- * @param {number} outputWidthPx     - Ancho final en píxeles (corresponde a 9.22 cm a 150 dpi ≈ 544 px)
+ * @param {HTMLImageElement} img
+ * @param {{ scale, offsetX, offsetY }} state  - pan/zoom del usuario
+ * @param {{ datetime, name, extra }} overlay
+ * @param {number} slotW  - ancho de salida en px (544)
+ * @param {number} slotH  - alto de salida en px  (733)
  * @returns {Promise<Blob>}
  */
-export async function renderPhoto(img, crop, heightScale = 1.0, overlay = {}, outputWidthPx = 544) {
-  const cropW = crop.width
-  const cropH = crop.height
-
-  // Alto proporcional × factor de escala
-  const aspectRatio = cropH / cropW
-  const outW = outputWidthPx
-  const outH = Math.round(outW * aspectRatio * heightScale)
-
+export async function renderPhotoFixed(img, state, overlay = {}, slotW = 544, slotH = 733) {
   const canvas = document.createElement('canvas')
-  canvas.width = outW
-  canvas.height = outH
+  canvas.width  = slotW
+  canvas.height = slotH
   const ctx = canvas.getContext('2d')
 
-  // Dibujar imagen recortada y escalada
-  ctx.drawImage(
-    img,
-    crop.x, crop.y, cropW, cropH,  // fuente: área recortada
-    0, 0, outW, outH               // destino: canvas completo
-  )
+  // Fondo negro por si la foto no cubre todo
+  ctx.fillStyle = '#000'
+  ctx.fillRect(0, 0, slotW, slotH)
 
-  // Estampar texto si hay overlay
-  const lines = buildOverlayLines(overlay)
+  const { scale = 1, offsetX = 0, offsetY = 0 } = state
+  const photoW = img.naturalWidth  * scale
+  const photoH = img.naturalHeight * scale
+  const x = (slotW - photoW) / 2 + offsetX
+  const y = (slotH - photoH) / 2 + offsetY
+
+  ctx.drawImage(img, x, y, photoW, photoH)
+
+  // Texto estampado
+  const lines = [overlay.datetime, overlay.name, overlay.extra].filter(Boolean)
   if (lines.length > 0) {
-    const fontSize = Math.max(12, Math.round(outW * 0.030))
+    const fontSize = Math.max(14, Math.round(slotW * 0.028))
     ctx.font = `bold ${fontSize}px monospace`
     ctx.textBaseline = 'bottom'
-
-    const lineH = fontSize + 4
+    const lineH   = fontSize + 4
     const padding = 8
-    const totalH = lines.length * lineH + padding
+    const totalH  = lines.length * lineH + padding
 
-    // Fondo semitransparente
     ctx.fillStyle = 'rgba(0,0,0,0.45)'
-    ctx.fillRect(0, outH - totalH, outW, totalH)
+    ctx.fillRect(0, slotH - totalH, slotW, totalH)
 
-    // Texto en naranja/amarillo estilo cámara
     ctx.fillStyle = '#FFA500'
     lines.forEach((line, i) => {
-      const y = outH - padding - (lines.length - 1 - i) * lineH
-      ctx.fillText(line, padding, y)
+      ctx.fillText(line, padding, slotH - padding - (lines.length - 1 - i) * lineH)
     })
   }
 
-  return new Promise(resolve => {
-    canvas.toBlob(resolve, 'image/jpeg', 0.92)
-  })
+  return new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.92))
 }
 
-function buildOverlayLines({ datetime, name, extra }) {
-  const lines = []
-  if (datetime) lines.push(datetime)
-  if (name) lines.push(name)
-  if (extra) lines.push(extra)
-  return lines
-}
-
-/**
- * Carga un File/Blob en un HTMLImageElement.
- */
+/** Carga un File/Blob en un HTMLImageElement */
 export function loadImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()
-    img.onload = () => { URL.revokeObjectURL(url); resolve(img) }
+    img.onload  = () => { URL.revokeObjectURL(url); resolve(img) }
     img.onerror = reject
     img.src = url
-  })
-}
-
-/**
- * Convierte un Blob a ArrayBuffer.
- */
-export function blobToArrayBuffer(blob) {
-  return blob.arrayBuffer()
-}
-
-/**
- * Convierte un Blob a base64 string (sin prefijo data:).
- */
-export function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result.split(',')[1])
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
   })
 }

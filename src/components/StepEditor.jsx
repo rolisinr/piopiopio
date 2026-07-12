@@ -1,325 +1,266 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { readExifDateTime } from '../lib/exifReader'
-import { renderPhoto, loadImage } from '../lib/photoEditor'
+import { renderPhotoFixed, loadImage } from '../lib/photoEditor'
 
-const SLOT_WIDTH = 320   // px para preview (proporcional a 9.22cm)
-const OUTPUT_WIDTH = 544  // px para el Word (9.22cm a ~150dpi)
+// Dimensiones fijas del slot en px de salida (150 DPI)
+// 9.22 cm × 150/2.54 = 544px  |  12.43 cm × 150/2.54 = 733px
+export const SLOT_W = 544
+export const SLOT_H = 733
 
 export default function StepEditor({ rawPhotos, editedPhotos, setEditedPhotos, workerName, onNext, onBack }) {
-  const [current, setCurrent] = useState(0)
-  const [overlays, setOverlays] = useState(() =>
-    rawPhotos.map(() => ({ datetime: '', name: workerName, extra: '' }))
-  )
-  const [heightScales, setHeightScales] = useState(() => rawPhotos.map(() => 1.0))
-  const [crops, setCrops] = useState(() => rawPhotos.map(() => null))
-  const [previews, setPreviews] = useState(() => rawPhotos.map(() => null))
+  const [current, setCurrent]       = useState(0)
+  const [overlays, setOverlays]     = useState(() => rawPhotos.map(() => ({ datetime: '', name: workerName, extra: '' })))
+  const [states, setStates]         = useState(() => rawPhotos.map(() => ({ scale: 1, offsetX: 0, offsetY: 0 })))
+  const [previews, setPreviews]     = useState(() => rawPhotos.map(() => null))
   const [loadedImgs, setLoadedImgs] = useState([])
   const [isRendering, setIsRendering] = useState(false)
-  const [cropMode, setCropMode] = useState(false)
-  const [cropStart, setCropStart] = useState(null)
-  const [cropRect, setCropRect] = useState(null)
-  const canvasRef = useRef()
-  const previewRef = useRef()
-  const renderTimerRef = useRef()
 
-  // Cargar imágenes y leer EXIF
+  const frameRef    = useRef()
+  const renderTimer = useRef()
+  const dragState   = useRef(null)  // { startX, startY, startOX, startOY }
+  const pinchState  = useRef(null)  // { startDist, startScale }
+
+  // Cargar imágenes + leer EXIF
   useEffect(() => {
-    Promise.all(rawPhotos.map(f => loadImage(f))).then(setLoadedImgs)
-
+    Promise.all(rawPhotos.map(f => loadImage(f))).then(imgs => {
+      setLoadedImgs(imgs)
+      // Inicializar escala para cubrir el slot (cover)
+      setStates(imgs.map(img => {
+        const scaleX = SLOT_W / img.naturalWidth
+        const scaleY = SLOT_H / img.naturalHeight
+        const scale  = Math.max(scaleX, scaleY)
+        return { scale, offsetX: 0, offsetY: 0 }
+      }))
+    })
     rawPhotos.forEach(async (f, i) => {
       const exif = await readExifDateTime(f)
-      if (exif) {
-        setOverlays(prev => {
-          const next = [...prev]
-          next[i] = { ...next[i], datetime: exif.formatted }
-          return next
-        })
-      }
+      if (exif) setOverlays(prev => { const n=[...prev]; n[i]={...n[i], datetime: exif.formatted}; return n })
     })
   }, [])
 
-  const photo = rawPhotos[current]
-  const img = loadedImgs[current]
+  const img     = loadedImgs[current]
   const overlay = overlays[current] || { datetime: '', name: workerName, extra: '' }
-  const heightScale = heightScales[current] || 1.0
-  const crop = crops[current]
+  const state   = states[current]   || { scale: 1, offsetX: 0, offsetY: 0 }
 
-  // Calcular crop efectivo
-  const effectiveCrop = useCallback(() => {
-    if (!img) return null
-    if (crop) return crop
-    return { x: 0, y: 0, width: img.naturalWidth, height: img.naturalHeight }
-  }, [img, crop])
-
-  // Re-renderizar preview cuando cambian parámetros
+  // Re-renderizar cuando cambian parámetros
   useEffect(() => {
-    if (!img) return
-    clearTimeout(renderTimerRef.current)
-    renderTimerRef.current = setTimeout(async () => {
+    if (!img || !state) return
+    clearTimeout(renderTimer.current)
+    renderTimer.current = setTimeout(async () => {
       setIsRendering(true)
       try {
-        const c = effectiveCrop()
-        const blob = await renderPhoto(img, c, heightScale, overlay, OUTPUT_WIDTH)
-        const url = URL.createObjectURL(blob)
-        setPreviews(prev => {
-          const next = [...prev]
-          if (prev[current]) URL.revokeObjectURL(prev[current])
-          next[current] = url
-          return next
-        })
-        // Guardar blob editado
-        setEditedPhotos(prev => {
-          const next = [...prev]
-          next[current] = { file: photo, blob, overlay, heightScale, crop: c }
-          return next
-        })
-      } finally {
-        setIsRendering(false)
-      }
-    }, 400)
-  }, [img, overlay, heightScale, crop, current])
+        const blob = await renderPhotoFixed(img, state, overlay, SLOT_W, SLOT_H)
+        const url  = URL.createObjectURL(blob)
+        setPreviews(prev => { const n=[...prev]; if(prev[current]) URL.revokeObjectURL(prev[current]); n[current]=url; return n })
+        setEditedPhotos(prev => { const n=[...prev]; n[current]={ file: rawPhotos[current], blob, overlay, state }; return n })
+      } finally { setIsRendering(false) }
+    }, 300)
+  }, [img, state, overlay, current])
 
-  const updateOverlay = (key, val) => {
-    setOverlays(prev => {
-      const next = [...prev]
-      next[current] = { ...next[current], [key]: val }
-      return next
-    })
+  const updateState = (patch) => setStates(prev => { const n=[...prev]; n[current]={...n[current],...patch}; return n })
+  const updateOverlay = (key, val) => setOverlays(prev => { const n=[...prev]; n[current]={...n[current],[key]:val}; return n })
+
+  // --- Drag (mouse) ---
+  const onMouseDown = (e) => {
+    e.preventDefault()
+    dragState.current = { startX: e.clientX, startY: e.clientY, startOX: state.offsetX, startOY: state.offsetY }
   }
-
-  const setHeightScale = (val) => {
-    setHeightScales(prev => {
-      const next = [...prev]
-      next[current] = val
-      return next
-    })
+  const onMouseMove = (e) => {
+    if (!dragState.current) return
+    const dx = e.clientX - dragState.current.startX
+    const dy = e.clientY - dragState.current.startY
+    const display = frameRef.current
+    if (!display) return
+    const scaleDisplay = display.offsetWidth / SLOT_W
+    updateState({ offsetX: dragState.current.startOX + dx / scaleDisplay, offsetY: dragState.current.startOY + dy / scaleDisplay })
   }
+  const onMouseUp = () => { dragState.current = null }
 
-  const resetCrop = () => {
-    setCrops(prev => {
-      const next = [...prev]
-      next[current] = null
-      return next
-    })
-    setCropMode(false)
-    setCropRect(null)
-  }
-
-  const applyProporcional = () => {
-    setHeightScale(1.0)
-  }
-
-  const applyRellenar = () => {
-    if (!img) return
-    const c = effectiveCrop()
-    const naturalRatio = c.height / c.width
-    // Ajustar para que la altura equivalga a la mayor de las fotos del par (placeholder: 0.75)
-    const targetRatio = 0.75
-    setHeightScale(targetRatio / naturalRatio)
-  }
-
-  // Lógica de recorte en canvas
-  const handleCanvasMouseDown = (e) => {
-    if (!cropMode || !img) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    setCropStart({ x: e.clientX - rect.left, y: e.clientY - rect.top })
-    setCropRect(null)
-  }
-
-  const handleCanvasMouseMove = (e) => {
-    if (!cropMode || !cropStart) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    setCropRect({ x: Math.min(cropStart.x, x), y: Math.min(cropStart.y, y), w: Math.abs(x - cropStart.x), h: Math.abs(y - cropStart.y) })
-  }
-
-  const handleCanvasMouseUp = (e) => {
-    if (!cropMode || !cropStart || !img || !cropRect) return
-    // Convertir coordenadas de preview a coordenadas de imagen real
-    const previewEl = e.currentTarget
-    const scaleX = img.naturalWidth / previewEl.offsetWidth
-    const scaleY = img.naturalHeight / previewEl.offsetHeight
-    const newCrop = {
-      x: Math.round(cropRect.x * scaleX),
-      y: Math.round(cropRect.y * scaleY),
-      width: Math.max(10, Math.round(cropRect.w * scaleX)),
-      height: Math.max(10, Math.round(cropRect.h * scaleY)),
+  // --- Drag (touch) ---
+  const onTouchStart = (e) => {
+    if (e.touches.length === 1) {
+      const t = e.touches[0]
+      dragState.current = { startX: t.clientX, startY: t.clientY, startOX: state.offsetX, startOY: state.offsetY }
+    } else if (e.touches.length === 2) {
+      const dist = getTouchDist(e.touches)
+      pinchState.current = { startDist: dist, startScale: state.scale }
+      dragState.current = null
     }
-    setCrops(prev => {
-      const next = [...prev]
-      next[current] = newCrop
-      return next
-    })
-    setCropMode(false)
-    setCropStart(null)
-    setCropRect(null)
+  }
+  const onTouchMove = (e) => {
+    e.preventDefault()
+    if (e.touches.length === 1 && dragState.current) {
+      const t = e.touches[0]
+      const dx = t.clientX - dragState.current.startX
+      const dy = t.clientY - dragState.current.startY
+      const display = frameRef.current
+      if (!display) return
+      const scaleDisplay = display.offsetWidth / SLOT_W
+      updateState({ offsetX: dragState.current.startOX + dx / scaleDisplay, offsetY: dragState.current.startOY + dy / scaleDisplay })
+    } else if (e.touches.length === 2 && pinchState.current) {
+      const dist     = getTouchDist(e.touches)
+      const newScale = Math.max(0.3, Math.min(5, pinchState.current.startScale * (dist / pinchState.current.startDist)))
+      updateState({ scale: newScale })
+    }
+  }
+  const onTouchEnd = () => { dragState.current = null; pinchState.current = null }
+
+  // --- Scroll para zoom en desktop ---
+  const onWheel = (e) => {
+    e.preventDefault()
+    const delta = e.deltaY > 0 ? 0.92 : 1.08
+    updateState({ scale: Math.max(0.3, Math.min(5, state.scale * delta)) })
   }
 
-  const allDone = rawPhotos.length > 0 && editedPhotos.filter(Boolean).length === rawPhotos.length
+  const getTouchDist = (touches) => {
+    const dx = touches[0].clientX - touches[1].clientX
+    const dy = touches[0].clientY - touches[1].clientY
+    return Math.sqrt(dx*dx + dy*dy)
+  }
+
+  const resetPosition = () => {
+    if (!img) return
+    const scaleX = SLOT_W / img.naturalWidth
+    const scaleY = SLOT_H / img.naturalHeight
+    updateState({ scale: Math.max(scaleX, scaleY), offsetX: 0, offsetY: 0 })
+  }
+
+  // Calcular estilos de la foto dentro del frame de preview
+  const getImgStyle = useCallback(() => {
+    if (!img || !state || !frameRef.current) return {}
+    const displayW = frameRef.current.offsetWidth || 280
+    const displayScale = displayW / SLOT_W
+    const photoW = img.naturalWidth  * state.scale * displayScale
+    const photoH = img.naturalHeight * state.scale * displayScale
+    const left   = (displayW - photoW) / 2 + state.offsetX * displayScale
+    const top    = (displayW * SLOT_H / SLOT_W - photoH) / 2 + state.offsetY * displayScale
+    return { width: photoW, height: photoH, left, top }
+  }, [img, state])
 
   return (
-    <div className="max-w-2xl mx-auto px-4 py-6 space-y-4">
+    <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold text-white">Editor de fotos</h2>
         <span className="text-sm text-gray-400">{current + 1} / {rawPhotos.length}</span>
       </div>
 
-      {/* Miniaturas de navegación */}
+      {/* Miniaturas */}
       <div className="flex gap-2 overflow-x-auto pb-1">
         {rawPhotos.map((f, i) => (
-          <button
-            key={i}
-            onClick={() => setCurrent(i)}
-            className={`flex-shrink-0 w-14 h-14 rounded-lg overflow-hidden border-2 transition-all ${
-              i === current ? 'border-blue-500' :
-              editedPhotos[i] ? 'border-green-600' :
-              'border-gray-700'
-            }`}
-          >
+          <button key={i} onClick={() => setCurrent(i)}
+            className={`flex-shrink-0 w-12 h-12 rounded-lg overflow-hidden border-2 transition-all ${
+              i === current ? 'border-blue-500' : editedPhotos[i] ? 'border-green-600' : 'border-gray-700'
+            }`}>
             <img src={previews[i] || URL.createObjectURL(f)} alt="" className="w-full h-full object-cover" />
           </button>
         ))}
       </div>
 
-      {/* Preview principal */}
-      <div className="relative bg-gray-900 rounded-xl overflow-hidden">
-        {img && (
-          <div
-            className={`relative select-none ${cropMode ? 'cursor-crosshair' : 'cursor-default'}`}
-            onMouseDown={handleCanvasMouseDown}
-            onMouseMove={handleCanvasMouseMove}
-            onMouseUp={handleCanvasMouseUp}
-          >
+      {/* Frame de recorte fijo */}
+      <div className="space-y-1">
+        <div className="flex items-center justify-between">
+          <p className="text-xs text-gray-400">Mueve y pellizca para encuadrar · Scroll para zoom</p>
+          <button onClick={resetPosition} className="text-xs text-blue-400 underline">Resetear</button>
+        </div>
+        <div
+          ref={frameRef}
+          className="relative overflow-hidden rounded-lg border-2 border-blue-500 cursor-grab active:cursor-grabbing select-none bg-gray-800 mx-auto"
+          style={{ width: '100%', aspectRatio: `${SLOT_W} / ${SLOT_H}` }}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onWheel={onWheel}
+        >
+          {img && (
             <img
-              src={previews[current] || URL.createObjectURL(photo)}
-              alt="Preview"
-              className="w-full max-h-72 object-contain"
+              src={URL.createObjectURL(rawPhotos[current])}
+              alt="foto"
+              draggable={false}
+              className="absolute pointer-events-none"
+              style={getImgStyle()}
             />
-            {/* Overlay de recorte */}
-            {cropMode && cropRect && (
-              <div
-                className="absolute border-2 border-blue-400 bg-blue-400/10 pointer-events-none"
-                style={{ left: cropRect.x, top: cropRect.y, width: cropRect.w, height: cropRect.h }}
-              />
-            )}
-            {isRendering && (
-              <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                <span className="text-sm text-gray-300">Procesando...</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Indicador de slot */}
-        <div className="absolute top-2 right-2 bg-black/60 text-xs text-gray-300 px-2 py-1 rounded">
-          Ancho: 9.22 cm fijo
+          )}
+          {/* Overlay de texto preview */}
+          {(overlay.datetime || overlay.name || overlay.extra) && (
+            <div className="absolute bottom-0 left-0 right-0 bg-black/45 px-2 py-1">
+              <p className="text-orange-400 text-[10px] font-mono font-bold leading-tight">
+                {[overlay.datetime, overlay.name, overlay.extra].filter(Boolean).join(' · ')}
+              </p>
+            </div>
+          )}
+          {isRendering && (
+            <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+              <span className="text-xs text-white">Procesando...</span>
+            </div>
+          )}
+          {/* Guías de esquinas */}
+          {['top-0 left-0','top-0 right-0','bottom-0 left-0','bottom-0 right-0'].map((pos, i) => (
+            <div key={i} className={`absolute ${pos} w-5 h-5 border-blue-400 ${
+              i===0?'border-t-2 border-l-2':i===1?'border-t-2 border-r-2':i===2?'border-b-2 border-l-2':'border-b-2 border-r-2'
+            }`} />
+          ))}
         </div>
+        <p className="text-xs text-gray-500 text-center">9.22 cm × 12.43 cm — tamaño fijo del slot</p>
       </div>
 
-      {/* Controles de recorte */}
-      <div className="bg-gray-900 rounded-xl p-4 space-y-3">
+      {/* Zoom manual */}
+      <div className="bg-gray-900 rounded-xl p-3 space-y-2">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-300">✂️ Recorte</span>
-          <div className="flex gap-2">
-            <button
-              onClick={() => { setCropMode(!cropMode); setCropRect(null) }}
-              className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
-                cropMode ? 'bg-blue-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              }`}
-            >
-              {cropMode ? 'Cancelar' : 'Activar recorte'}
-            </button>
-            {crop && (
-              <button onClick={resetCrop} className="text-xs px-3 py-1.5 rounded-lg bg-gray-700 text-gray-300 hover:bg-gray-600">
-                Resetear
-              </button>
-            )}
-          </div>
+          <span className="text-sm text-gray-300">🔍 Zoom</span>
+          <span className="text-xs text-gray-400 font-mono">{Math.round((state?.scale || 1) * 100)}%</span>
         </div>
-        {cropMode && <p className="text-xs text-blue-400">Arrastra sobre la imagen para seleccionar el área</p>}
-        {crop && <p className="text-xs text-green-400">Recorte aplicado: {crop.width}×{crop.height}px</p>}
-      </div>
-
-      {/* Slider de altura */}
-      <div className="bg-gray-900 rounded-xl p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-gray-300">↕️ Altura</span>
-          <span className="text-xs text-gray-400 font-mono">{Math.round(heightScale * 100)}%</span>
-        </div>
-        <input
-          type="range"
-          min={0.5}
-          max={2.0}
-          step={0.02}
-          value={heightScale}
-          onChange={e => setHeightScale(parseFloat(e.target.value))}
+        <input type="range" min={0.3} max={5} step={0.02}
+          value={state?.scale || 1}
+          onChange={e => updateState({ scale: parseFloat(e.target.value) })}
           className="w-full accent-blue-500"
         />
-        <div className="flex gap-2">
-          <button onClick={applyProporcional} className="flex-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1.5 rounded-lg transition-colors">
-            Proporcional
-          </button>
-          <button onClick={applyRellenar} className="flex-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 py-1.5 rounded-lg transition-colors">
-            Rellenar (4:3)
-          </button>
-        </div>
       </div>
 
-      {/* Overlay de texto */}
+      {/* Texto estampado */}
       <div className="bg-gray-900 rounded-xl p-4 space-y-3">
-        <span className="text-sm font-medium text-gray-300">🕐 Texto estampado</span>
+        <span className="text-sm font-medium text-gray-300">🕐 Texto en la foto</span>
         <div className="space-y-2">
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Fecha y hora</label>
-            <input
-              value={overlay.datetime}
-              onChange={e => updateOverlay('datetime', e.target.value)}
+            <input value={overlay.datetime} onChange={e => updateOverlay('datetime', e.target.value)}
               placeholder="Ej: 12 jul 2026 10:28:47 a.m."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono"
-            />
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500 font-mono" />
           </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Nombre</label>
-            <input
-              value={overlay.name}
-              onChange={e => updateOverlay('name', e.target.value.toUpperCase())}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono uppercase"
-            />
+            <input value={overlay.name} onChange={e => updateOverlay('name', e.target.value.toUpperCase())}
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500 font-mono uppercase" />
           </div>
           <div>
             <label className="text-xs text-gray-500 mb-1 block">Texto adicional</label>
-            <input
-              value={overlay.extra}
-              onChange={e => updateOverlay('extra', e.target.value)}
-              placeholder="Ej: Turno noche, ubicación, etc."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500"
-            />
+            <input value={overlay.extra} onChange={e => updateOverlay('extra', e.target.value)}
+              placeholder="Turno noche, ubicación, etc."
+              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white placeholder-gray-600 focus:outline-none focus:border-blue-500" />
           </div>
         </div>
       </div>
 
-      {/* Navegación entre fotos */}
+      {/* Nav entre fotos */}
       <div className="flex gap-2">
-        <button onClick={() => setCurrent(c => Math.max(0, c - 1))} disabled={current === 0}
+        <button onClick={() => setCurrent(c => Math.max(0, c-1))} disabled={current===0}
           className="flex-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 py-2.5 rounded-lg text-sm transition-colors">
           ← Anterior
         </button>
-        <button onClick={() => setCurrent(c => Math.min(rawPhotos.length - 1, c + 1))} disabled={current === rawPhotos.length - 1}
+        <button onClick={() => setCurrent(c => Math.min(rawPhotos.length-1, c+1))} disabled={current===rawPhotos.length-1}
           className="flex-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-40 text-gray-300 py-2.5 rounded-lg text-sm transition-colors">
           Siguiente →
         </button>
       </div>
 
-      {/* Acciones principales */}
       <div className="flex gap-3">
         <button onClick={onBack} className="flex-1 bg-gray-800 hover:bg-gray-700 text-gray-300 py-3 rounded-lg font-medium transition-colors">
           ← Atrás
         </button>
-        <button
-          onClick={onNext}
-          className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-semibold transition-colors"
-        >
+        <button onClick={onNext} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-3 rounded-lg font-semibold transition-colors">
           Asignar a Anexos →
         </button>
       </div>
