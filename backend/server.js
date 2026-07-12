@@ -262,3 +262,18 @@ app.listen(PORT, () => {
   console.log(`   Drive: ${DRIVE_ENABLED ? '✅ habilitado' : '⚠️  deshabilitado'}`)
   console.log(`   Bot token: ${BOT_TOKEN ? '✅' : '❌ falta TELEGRAM_BOT_TOKEN'}`)
 })
+
+// ── Proxy de fotos (evita problema de autenticación con URLs de Telegram) ──
+app.get('/photo', async (req, res) => {
+  const { url } = req.query
+  if (!url) return res.status(400).send('URL requerida')
+  try {
+    const response = await fetch(url)
+    const buffer   = await response.buffer()
+    res.set('Content-Type', 'image/jpeg')
+    res.set('Cache-Control', 'public, max-age=86400')
+    res.send(buffer)
+  } catch (e) {
+    res.status(500).send('Error al cargar foto')
+  }
+})
