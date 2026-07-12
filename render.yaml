@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: anexo-backend
+    env: node
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false          # Lo ingresas manualmente en Render dashboard
+      - key: GOOGLE_DRIVE_FOLDER_ID
+        sync: false          # ID de la carpeta de Drive
+      - key: GOOGLE_SERVICE_ACCOUNT
+        sync: false          # JSON de la cuenta de servicio (minificado)

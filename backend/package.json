@@ -1,0 +1,15 @@
+{
+  "name": "anexo-backend",
+  "version": "1.0.0",
+  "description": "Bot de Telegram + Google Drive para Anexo Generator",
+  "main": "server.js",
+  "engines": { "node": "20" },
+  "scripts": { "start": "node server.js", "dev": "node --watch server.js" },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "googleapis": "^140.0.0",
+    "node-fetch": "^2.7.0"
+  }
+}

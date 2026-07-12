@@ -227,3 +227,6 @@ export default function StepGenerate({ assignments, editedPhotos, workerName, on
     </div>
   )
 }
+
+// Exportación adicional para uso desde TelegramSessions
+export { generateWord }

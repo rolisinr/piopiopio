@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { listenSessions, listenSessionPhotos } from '../lib/firebase'
+import { listenSessions, listenSessionPhotos } from '../lib/telegramApi'
 
 /**
  * Pantalla para cargar fotos desde una sesión de Telegram.
