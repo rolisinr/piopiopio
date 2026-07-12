@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Sesiones de trabajadores
+    match /sessions/{chatId} {
+      // Solo lectura desde la PWA (sin auth por ahora)
+      allow read: if true;
+      // Escritura solo desde el servidor (Functions usan admin SDK)
+      allow write: if false;
+
+      // Fotos dentro de cada sesión
+      match /photos/{photoId} {
+        allow read: if true;
+        allow write: if false;
+      }
+    }
+  }
+}

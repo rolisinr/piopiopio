@@ -1,0 +1,16 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Fotos de trabajadores - lectura pública, escritura solo desde servidor
+    match /photos/{chatId}/{fileName} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Bloquear todo lo demás
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
