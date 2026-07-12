@@ -8,11 +8,11 @@ import StepGenerate from './components/StepGenerate'
 const STEPS = ['Inicio', 'Fotos', 'Editor', 'Anexos', 'Generar']
 
 export default function App() {
-  const [step, setStep] = useState(0)
+  const [step, setStep]             = useState(0)
   const [workerName, setWorkerName] = useState('')
-  const [rawPhotos, setRawPhotos] = useState([])
+  const [rawPhotos, setRawPhotos]   = useState([])
   const [editedPhotos, setEditedPhotos] = useState([])
-  const [assignments, setAssignments] = useState(
+  const [assignments, setAssignments]   = useState(
     Array(5).fill(null).map(() => ({ left: null, right: null }))
   )
 
@@ -34,17 +34,15 @@ export default function App() {
         <div className="flex items-center gap-1 max-w-xl mx-auto">
           {STEPS.map((label, i) => (
             <div key={i} className="flex items-center gap-1 flex-1">
-              <button
-                onClick={() => i < step && setStep(i)}
+              <button onClick={() => i < step && setStep(i)}
                 className={`flex items-center gap-1.5 text-xs font-medium transition-colors ${
                   i === step ? 'text-blue-400' :
-                  i < step ? 'text-green-400 cursor-pointer' :
+                  i < step  ? 'text-green-400 cursor-pointer' :
                   'text-gray-600 cursor-default'
-                }`}
-              >
+                }`}>
                 <span className={`w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold ${
                   i === step ? 'bg-blue-500 text-white' :
-                  i < step ? 'bg-green-500 text-white' :
+                  i < step  ? 'bg-green-500 text-white' :
                   'bg-gray-700 text-gray-500'
                 }`}>
                   {i < step ? '✓' : i + 1}
@@ -61,7 +59,7 @@ export default function App() {
 
       <main className="flex-1 overflow-auto">
         {step === 0 && <StepStart workerName={workerName} setWorkerName={setWorkerName} onNext={next} />}
-        {step === 1 && <StepUpload photos={rawPhotos} setPhotos={setRawPhotos} onNext={next} onBack={back} />}
+        {step === 1 && <StepUpload photos={rawPhotos} setPhotos={setRawPhotos} setWorkerName={setWorkerName} onNext={next} onBack={back} />}
         {step === 2 && <StepEditor rawPhotos={rawPhotos} editedPhotos={editedPhotos} setEditedPhotos={setEditedPhotos} workerName={workerName} onNext={next} onBack={back} />}
         {step === 3 && <StepAssign editedPhotos={editedPhotos} assignments={assignments} setAssignments={setAssignments} onNext={next} onBack={back} />}
         {step === 4 && <StepGenerate assignments={assignments} editedPhotos={editedPhotos} workerName={workerName} onBack={back} />}
