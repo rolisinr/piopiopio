@@ -1,6 +1,3 @@
-export const SLOT_W = 544   // 9.22 cm a 150 DPI
-export const SLOT_H = 733   // 12.43 cm a 150 DPI
-
 export function loadImage(file) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
@@ -12,83 +9,70 @@ export function loadImage(file) {
 }
 
 /**
- * Fase 1 — Crop: recorta la foto según el estado de pan/zoom en el frame de recorte.
- * Devuelve un Blob JPEG con solo la parte visible.
+ * Renderiza la foto con recorte (pan/zoom), texto estampado y la devuelve como Blob.
+ * El ancho de salida es fijo (SLOT_W). La altura es proporcional al recorte elegido.
+ *
+ * @param {HTMLImageElement} img
+ * @param {{ scale, dx, dy }} panZoom  - dx/dy en píxeles de pantalla del canvas
+ * @param {{ datetime, name, extra }} overlay
+ * @param {number} canvasW  - ancho del canvas de preview en px
+ * @param {number} canvasH  - alto del canvas de preview en px
+ * @param {number} outW     - ancho de salida en px (para el Word)
  */
-export async function cropPhoto(img, cropState, cropW, cropH) {
-  const { scale = 1, offsetX = 0, offsetY = 0 } = cropState
-  const canvas = document.createElement('canvas')
-  canvas.width  = cropW
-  canvas.height = cropH
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, cropW, cropH)
-  const photoW = img.naturalWidth  * scale
-  const photoH = img.naturalHeight * scale
-  const x = (cropW - photoW) / 2 + offsetX
-  const y = (cropH - photoH) / 2 + offsetY
-  ctx.drawImage(img, x, y, photoW, photoH)
-  return new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.95))
+export async function renderCrop(img, panZoom, overlay, canvasW, canvasH, outW = 544) {
+  // Dibujar preview en canvas de pantalla
+  const previewCanvas = document.createElement('canvas')
+  previewCanvas.width  = canvasW
+  previewCanvas.height = canvasH
+  drawOnCanvas(previewCanvas.getContext('2d'), img, panZoom, canvasW, canvasH, overlay)
+
+  // Dibujar salida a resolución Word (proporcional)
+  const outH = Math.round(outW * canvasH / canvasW)
+  const outCanvas = document.createElement('canvas')
+  outCanvas.width  = outW
+  outCanvas.height = outH
+  const scaleRatio = outW / canvasW
+  const scaledPan  = { scale: panZoom.scale * scaleRatio, dx: panZoom.dx * scaleRatio, dy: panZoom.dy * scaleRatio }
+  drawOnCanvas(outCanvas.getContext('2d'), img, scaledPan, outW, outH, overlay)
+
+  return {
+    previewUrl: previewCanvas.toDataURL('image/jpeg', 0.85),
+    blob: await new Promise(r => outCanvas.toBlob(r, 'image/jpeg', 0.92)),
+    aspectRatio: canvasH / canvasW,
+  }
 }
 
-/**
- * Fase 2 — Stamp: estampa texto en la esquina inferior izquierda de la foto.
- * Texto blanco con sombra sutil, sin caja de fondo.
- */
-export async function stampPhoto(blob, overlay) {
-  const lines = [overlay.datetime, overlay.name, overlay.extra].filter(Boolean)
-  if (!lines.length) return blob
+function drawOnCanvas(ctx, img, { scale, dx, dy }, W, H, overlay) {
+  ctx.fillStyle = '#111'
+  ctx.fillRect(0, 0, W, H)
 
-  const img = await loadImage(blob)
-  const canvas = document.createElement('canvas')
-  canvas.width  = img.naturalWidth
-  canvas.height = img.naturalHeight
-  const ctx = canvas.getContext('2d')
-  ctx.drawImage(img, 0, 0)
+  const photoW = img.naturalWidth  * scale
+  const photoH = img.naturalHeight * scale
+  const x = W / 2 - photoW / 2 + dx
+  const y = H / 2 - photoH / 2 + dy
+  ctx.drawImage(img, x, y, photoW, photoH)
 
-  const fontSize = Math.max(12, Math.round(img.naturalWidth * 0.032))
-  ctx.font = `bold ${fontSize}px monospace`
-  ctx.textBaseline = 'bottom'
-  const lineH  = fontSize + 3
-  const pad    = Math.round(img.naturalWidth * 0.015)
-
-  lines.forEach((line, i) => {
-    const y = img.naturalHeight - pad - (lines.length - 1 - i) * lineH
-    // Sombra para legibilidad sin caja
-    ctx.shadowColor   = 'rgba(0,0,0,0.85)'
-    ctx.shadowBlur    = 4
+  // Texto blanco con sombra, sin caja
+  const lines = [overlay?.datetime, overlay?.name, overlay?.extra].filter(Boolean)
+  if (lines.length) {
+    const fs  = Math.max(11, Math.round(W * 0.030))
+    ctx.font  = `bold ${fs}px monospace`
+    ctx.textBaseline = 'bottom'
+    const lh  = fs + 3
+    const pad = Math.round(W * 0.02)
+    ctx.shadowColor   = 'rgba(0,0,0,0.9)'
+    ctx.shadowBlur    = 5
     ctx.shadowOffsetX = 1
     ctx.shadowOffsetY = 1
     ctx.fillStyle = '#FFFFFF'
-    ctx.fillText(line, pad, y)
-  })
-  ctx.shadowColor = 'transparent'
-
-  return new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.92))
+    lines.forEach((line, i) => {
+      ctx.fillText(line, pad, H - pad - (lines.length - 1 - i) * lh)
+    })
+    ctx.shadowColor = 'transparent'
+  }
 }
 
-/**
- * Fase 3 — Slot: posiciona la foto estampada en el slot fijo del Word.
- * Devuelve un Blob JPEG de exactamente SLOT_W × SLOT_H px.
- */
-export async function placeInSlot(blob, slotState) {
-  const img = await loadImage(blob)
-  const canvas = document.createElement('canvas')
-  canvas.width  = SLOT_W
-  canvas.height = SLOT_H
-  const ctx = canvas.getContext('2d')
-  ctx.fillStyle = '#000'
-  ctx.fillRect(0, 0, SLOT_W, SLOT_H)
-  const { scale = 1, offsetX = 0, offsetY = 0 } = slotState
-  const photoW = img.naturalWidth  * scale
-  const photoH = img.naturalHeight * scale
-  const x = (SLOT_W - photoW) / 2 + offsetX
-  const y = (SLOT_H - photoH) / 2 + offsetY
-  ctx.drawImage(img, x, y, photoW, photoH)
-  return new Promise(r => canvas.toBlob(r, 'image/jpeg', 0.92))
-}
-
-/** Escala de cobertura inicial (cover fit) */
+/** Escala cover inicial */
 export function coverScale(imgW, imgH, frameW, frameH) {
   return Math.max(frameW / imgW, frameH / imgH)
 }
